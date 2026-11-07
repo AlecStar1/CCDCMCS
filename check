@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+#
+# audit_system.sh - Gathers core system information on modern Linux distributions.
+# Run with sudo/root privileges to ensure all listening ports and services are visible.
+
+set -euo pipefail
+
+divider() {
+    echo -e "\n=========================================="
+    echo -e "  $1"
+    echo -e "=========================================="
+}
+
+# 1. Hostname
+divider "HOSTNAME"
+hostnamectl --static 2>/dev/null || hostname -f 2>/dev/null || uname -n
+
+# 2. Operating System
+divider "OPERATING SYSTEM"
+if [ -f /etc/os-release ]; then
+    # Extracts the PRETTY_NAME value from /etc/os-release
+    source /etc/os-release
+    echo "OS: $PRETTY_NAME"
+    echo "Kernel: $(uname -r)"
+    echo "Architecture: $(uname -m)"
+elif type lsb_release >/dev/null 2>&1; then
+    lsb_release -d | cut -f2-
+else
+    uname -s -r -v
+fi
+
+# 3. IP Addresses
+divider "IP ADDRESSES"
+if command -v ip >/dev/null 2>&1; then
+    # Shows interface names and assigned IPv4/IPv6 addresses (excluding loopback)
+    ip -brief address show scope global
+elif command -v ifconfig >/dev/null 2>&1; then
+    ifconfig | awk '/^[a-zA-Z0-9]+:/ {iface=$1} /inet / {print iface, $2}'
+else
+    hostname -I
+fi
+
+# 4. Active Services
+divider "ACTIVE SERVICES"
+if command -v systemctl >/dev/null 2>&1; then
+    # Lists loaded and actively running systemd services
+    systemctl list-units --type=service --state=running --no-pager --no-legend | awk '{print $1}'
+elif command -v service >/dev/null 2>&1; then
+    service --status-all 2>&1 | grep '\\[ + \\]'
+else
+    echo "Service manager not recognized or systemd/service command not available."
+fi
+
+# 5. Open / Listening Ports
+divider "OPEN (LISTENING) PORTS"
+if command -v ss >/dev/null 2>&1; then
+    # Displays TCP and UDP listening sockets along with the associated process
+    ss -tulnp
+elif command -v netstat >/dev/null 2>&1; then
+    netstat -tulnp
+elif command -v lsof >/dev/null 2>&1; then
+    lsof -i -P -n | grep LISTEN
+else
+    echo "Neither 'ss', 'netstat', nor 'lsof' found."
+fi
+
+# 6. User Accounts
+divider "USER ACCOUNTS"
+echo -e "--- Non-System Users (UID >= 1000 and root) ---"
+awk -F: '($3 >= 1000 || $3 == 0) {printf "%-20s (UID: %-5s Shell: %s)\n", $1, $3, $7}' /etc/passwd
+
+echo -e "\n--- Currently Logged-in Users ---"
+who
